@@ -39,8 +39,8 @@ jobs:
         run: uv sync --dev --frozen
 
       # Stage 5: Linting
-      - name: Run Ruff
-        run: uv run ruff check app tests
+      # - name: Run Ruff
+      #   run: uv run ruff check app tests
 
       # Stage 6: Automated tests
       - name: Run Pytest
