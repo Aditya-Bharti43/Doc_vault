@@ -1,9 +1,9 @@
 import logging
 
 from fastapi import FastAPI
+
 from app.api.routes import documents
 from app.db.database import Base, engine
-from app.db import models
 
 logging.basicConfig(
     level=logging.INFO,

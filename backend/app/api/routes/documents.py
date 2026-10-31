@@ -1,14 +1,13 @@
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException
 from pathlib import Path
 from uuid import uuid4
-from sqlalchemy.orm import Session
-from fastapi import Depends
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
 from app.db.database import get_db
 from app.db.models import Document
-from typing import List, Tuple, Dict
-
 from app.schemas.document_reponse_schema import DocumentResponse
 
 logger = logging.getLogger(__name__)
@@ -154,7 +153,7 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         await file.close()
 
 
-@router.get("/", response_model=List[DocumentResponse])
+@router.get("/", response_model=list[DocumentResponse])
 def get_documents(db: Session = Depends(get_db)):
 
     logger.info("Fetching all documents from the database")

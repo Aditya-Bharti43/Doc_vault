@@ -1,6 +1,7 @@
-from sqlalchemy import String, Integer, DateTime
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
-from datetime import datetime, timezone
 
 from app.db.database import Base
 
@@ -27,6 +28,6 @@ class Document(Base):
 
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
