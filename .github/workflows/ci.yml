@@ -1,0 +1,47 @@
+
+name: Doc-Vault CI
+
+on:
+  push:
+    branches:
+      - "**"
+
+  pull_request:
+    branches:
+      - "**"
+
+jobs:
+  backend-checks:
+    name: Backend Tests and Quality Checks
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      # Stage 1: Checkout repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Stage 2: Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Stage 3: Install uv
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Stage 4: Install dependencies
+      - name: Install dependencies
+        run: uv sync --dev --frozen
+
+      # Stage 5: Linting
+      - name: Run Ruff
+        run: uv run ruff check app tests
+
+      # Stage 6: Automated tests
+      - name: Run Pytest
+        run: uv run pytest -v
