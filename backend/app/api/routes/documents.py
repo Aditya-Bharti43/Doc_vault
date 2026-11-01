@@ -25,7 +25,6 @@ router = APIRouter()
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
-# "writing this as a comment"
 
 async def validate_file_signature(file: UploadFile):
 
