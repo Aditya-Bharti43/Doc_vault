@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models import Document
 from app.schemas.document_reponse_schema import DocumentResponse
-
+from app.services.doc_processing_service import process_pdf_document
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -25,6 +25,11 @@ router = APIRouter()
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
+mime_types =    {
+                    ".pdf": "application/pdf",
+                    ".jpg": "image/jpeg",
+                    ".png": "image/png",
+                }
 
 async def validate_file_signature(file: UploadFile):
 
@@ -50,6 +55,7 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
     file_path = None
     document_id = None
+    document_saved = False
 
     try:
         # Step 1: Validate actual file content
@@ -95,12 +101,13 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
                 buffer.write(chunk)
 
+
         """Storing the metadata of the document in sqlite"""
 
         document = Document(
             document_id=document_id,
             filename=file.filename,
-            file_type=file.content_type,
+            file_type=mime_types[extension],
             file_size=total_file_size,
             storage_path=str(file_path),
             status="UPLOADED",
@@ -111,11 +118,25 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         db.commit()
         db.refresh(document)
 
+        document_saved = True
+
         logger.info(
             "Document uploaded: document_id=%s file_size=%d",
             document_id,
             total_file_size,
         )
+
+        # 7. Process PDFs
+        if extension == ".pdf":
+            process_pdf_document(
+                db=db,
+                document_id=document_id,
+                file_path=str(file_path),
+            )
+
+            db.refresh(document)
+
+        # Images will be handled by the OCR pipeline later.
 
         return {
             "document_id": document.document_id,
@@ -130,27 +151,44 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
         db.rollback()
 
-        if file_path is not None and file_path.exists():
-            file_path.unlink()
+
+        # Delete only if the document wasn't successfully committed
+        if not document_saved and file_path is not None:
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception(
+                    "Failed to clean up uploaded file: document_id=%s",
+                    document_id,
+                )
 
         raise
 
     except Exception:
+        db.rollback()
+
         logger.exception(
-            "Unexpected error while uploading document: document_id=%s",
+            "Unexpected error during document upload: document_id=%s",
             document_id,
         )
 
-        db.rollback()
+        if not document_saved and file_path is not None:
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception(
+                    "Failed to clean up uploaded file: document_id=%s",
+                    document_id,
+                )
 
-        if file_path is not None and file_path.exists():
-            file_path.unlink()
-
-        raise HTTPException(status_code=500, detail="Failed to upload document")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload document",
+        )
 
     finally:
-        # Step 6: Close uploaded temporary file
         await file.close()
+
 
 
 @router.get("/", response_model=list[DocumentResponse])

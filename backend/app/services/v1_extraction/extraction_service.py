@@ -11,9 +11,13 @@ def extract_pdf_markdown(file_path: str) -> list[dict]:
         extracted_pages = []
 
         for page_number, page in enumerate(pages, start=1):
+
+            metadata = page.get("metadata",{})
+
             extracted_pages.append({
                 "page_number": page_number,
-                "markdown": page["text"]
+                "markdown": page["text"],
+                "metadata":metadata
             })
 
         return extracted_pages
