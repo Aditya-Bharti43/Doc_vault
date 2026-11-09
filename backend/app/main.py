@@ -1,3 +1,4 @@
+from sqlalchemy import inspect
 import logging
 
 from fastapi import FastAPI
@@ -13,7 +14,12 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Doc-Vault API")
 
+
 Base.metadata.create_all(bind=engine)
+
+inspector = inspect(engine)
+
+print(inspector.get_table_names())
 logger.info("Database tables initialized")
 
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])

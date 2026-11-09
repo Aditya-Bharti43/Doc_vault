@@ -199,8 +199,7 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
         else:
             logger.warning(
                 "File not found in storage for deletion: %s",
-                file_path,
-                document_id=document_id,
+                file_path
             )
 
         # Delete the metadata from the database

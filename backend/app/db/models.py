@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
 
@@ -30,4 +30,27 @@ class Document(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         nullable=False,
+    )
+    pages = relationship(
+        "DocumentPage",
+        back_populates="document"
+    )
+
+
+class DocumentPage(Base):
+    __tablename__ = "document_pages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    document_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("documents.document_id")
+    )
+
+    page_number: Mapped[int] = mapped_column(Integer)
+    extracted_text: Mapped[str] = mapped_column(Text)
+
+    document: Mapped["Document"] = relationship(
+        "Document",
+        back_populates="pages"
     )
