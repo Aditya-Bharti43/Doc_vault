@@ -16,22 +16,26 @@ router = APIRouter()
 
 STORAGE_DIR = Path("storage")
 STORAGE_DIR.mkdir(exist_ok=True)
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB (max limit of file size for v1 pipeline)
-CHUNK_SIZE = 1024 * 1024  # 1MB
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+CHUNK_SIZE = 1024 * 1024           # 1 MB
 
 ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 router = APIRouter()
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-CHUNK_SIZE = 1024 * 1024  # 1 MB
+mime_types = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+}
 
-mime_types =    {
-                    ".pdf": "application/pdf",
-                    ".jpg": "image/jpeg",
-                    ".png": "image/png",
-                }
 
-async def validate_file_signature(file: UploadFile):
+async def validate_file_signature(file: UploadFile) -> str:
+    """
+    Reads the first 8 bytes to detect the true file type from its magic bytes.
+    Raises HTTP 400 for unrecognised signatures.
+    """
+    logger.debug("Validating file signature: filename=%s", file.filename)
 
     header = await file.read(8)
 
@@ -39,14 +43,22 @@ async def validate_file_signature(file: UploadFile):
     await file.seek(0)
 
     if header.startswith(b"%PDF"):
+        logger.debug("Detected file type: PDF")
         return ".pdf"
 
     if header.startswith(b"\xff\xd8\xff"):
+        logger.debug("Detected file type: JPEG")
         return ".jpg"
 
     if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        logger.debug("Detected file type: PNG")
         return ".png"
 
+    logger.warning(
+        "Rejected upload — unrecognised magic bytes: filename=%s header=%s",
+        file.filename,
+        header.hex(),
+    )
     raise HTTPException(status_code=400, detail="Invalid or unsupported file format")
 
 
@@ -56,6 +68,8 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     file_path = None
     document_id = None
     document_saved = False
+
+    logger.info("Upload request received: filename=%s content_type=%s", file.filename, file.content_type)
 
     try:
         # Step 1: Validate actual file content
@@ -67,6 +81,11 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png"}
 
         if original_extension not in allowed_extensions:
+            logger.warning(
+                "Rejected upload — invalid extension: filename=%s extension=%s",
+                file.filename,
+                original_extension,
+            )
             raise HTTPException(status_code=400, detail="Invalid file extension")
 
         # Ensure filename extension matches detected content
@@ -76,6 +95,13 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
             valid_extensions = {extension}
 
         if original_extension not in valid_extensions:
+            logger.warning(
+                "Rejected upload — extension/content mismatch: "
+                "filename=%s declared_ext=%s detected_ext=%s",
+                file.filename,
+                original_extension,
+                extension,
+            )
             raise HTTPException(
                 status_code=400, detail="File extension does not match file content"
             )
@@ -84,6 +110,7 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         document_id = str(uuid4())
 
         file_path = STORAGE_DIR / f"{document_id}{extension}"
+        logger.info("Assigned document_id=%s storage_path=%s", document_id, file_path)
 
         # Step 4: Write file in chunks with size restriction
         total_file_size = 0
@@ -95,15 +122,25 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
                 total_file_size += len(chunk)
 
                 if total_file_size > MAX_FILE_SIZE:
+                    logger.warning(
+                        "Rejected upload — file too large: document_id=%s size_so_far=%d",
+                        document_id,
+                        total_file_size,
+                    )
                     raise HTTPException(
                         status_code=413, detail="File size exceeds 10 MB limit"
                     )
 
                 buffer.write(chunk)
 
+        logger.info(
+            "File written to disk: document_id=%s file_size=%d path=%s",
+            document_id,
+            total_file_size,
+            file_path,
+        )
 
-        """Storing the metadata of the document in sqlite"""
-
+        # Step 5: Persist document metadata
         document = Document(
             document_id=document_id,
             filename=file.filename,
@@ -113,7 +150,6 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
             status="UPLOADED",
         )
 
-        """Persist meatadata"""
         db.add(document)
         db.commit()
         db.refresh(document)
@@ -121,20 +157,26 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         document_saved = True
 
         logger.info(
-            "Document uploaded: document_id=%s file_size=%d",
+            "Document metadata persisted: document_id=%s filename=%s file_size=%d",
             document_id,
+            file.filename,
             total_file_size,
         )
 
-        # 7. Process PDFs
+        # Step 6: Process PDFs (extract text)
         if extension == ".pdf":
+            logger.info("Triggering PDF processing: document_id=%s", document_id)
             process_pdf_document(
                 db=db,
                 document_id=document_id,
                 file_path=str(file_path),
             )
-
             db.refresh(document)
+            logger.info(
+                "PDF processing finished: document_id=%s status=%s",
+                document_id,
+                document.status,
+            )
 
         # Images will be handled by the OCR pipeline later.
 
@@ -147,19 +189,24 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         }
 
     except HTTPException as exc:
-        logger.warning("Document upload rejected: status_code=%d", exc.status_code)
-
+        logger.warning(
+            "Upload rejected: document_id=%s status_code=%d detail=%s",
+            document_id,
+            exc.status_code,
+            exc.detail,
+        )
         db.rollback()
-
 
         # Delete only if the document wasn't successfully committed
         if not document_saved and file_path is not None:
             try:
                 file_path.unlink(missing_ok=True)
+                logger.info("Cleaned up partial file: path=%s", file_path)
             except OSError:
                 logger.exception(
-                    "Failed to clean up uploaded file: document_id=%s",
+                    "Failed to clean up uploaded file: document_id=%s path=%s",
                     document_id,
+                    file_path,
                 )
 
         raise
@@ -175,10 +222,12 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         if not document_saved and file_path is not None:
             try:
                 file_path.unlink(missing_ok=True)
+                logger.info("Cleaned up partial file: path=%s", file_path)
             except OSError:
                 logger.exception(
-                    "Failed to clean up uploaded file: document_id=%s",
+                    "Failed to clean up uploaded file: document_id=%s path=%s",
                     document_id,
+                    file_path,
                 )
 
         raise HTTPException(
@@ -188,13 +237,13 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
     finally:
         await file.close()
-
+        logger.debug("Upload file handle closed: filename=%s", file.filename)
 
 
 @router.get("/", response_model=list[DocumentResponse])
 def get_documents(db: Session = Depends(get_db)):
 
-    logger.info("Fetching all documents from the database")
+    logger.info("Fetching all documents")
 
     try:
         documents = db.query(Document).order_by(Document.uploaded_at.desc()).all()
@@ -204,24 +253,33 @@ def get_documents(db: Session = Depends(get_db)):
         return documents
 
     except SQLAlchemyError:
-
         logger.exception("Database error occurred while fetching documents")
         raise HTTPException(status_code=500, detail="Failed to fetch documents")
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
 def get_document_by_id(document_id: str, db: Session = Depends(get_db)):
+    logger.info("Fetching document: document_id=%s", document_id)
+
     document = db.query(Document).filter(Document.document_id == document_id).first()
 
     if not document:
         logger.warning("Document not found: document_id=%s", document_id)
         raise HTTPException(status_code=404, detail="Document not found")
 
+    logger.info(
+        "Document found: document_id=%s filename=%s status=%s",
+        document_id,
+        document.filename,
+        document.status,
+    )
     return document
 
 
 @router.delete("/{document_id}")
 def delete_document(document_id: str, db: Session = Depends(get_db)):
+    logger.info("Delete request: document_id=%s", document_id)
+
     document = db.query(Document).filter(Document.document_id == document_id).first()
 
     if not document:
@@ -233,19 +291,19 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
         file_path = Path(document.storage_path)
         if file_path.exists():
             file_path.unlink()
-            logger.info("Deleted file from storage: %s", file_path)
+            logger.info("Deleted file from storage: path=%s", file_path)
         else:
             logger.warning(
-                "File not found in storage for deletion: %s",
-                file_path
+                "File not found in storage during deletion: path=%s document_id=%s",
+                file_path,
+                document_id,
             )
 
         # Delete the metadata from the database
-
         db.delete(document)
         db.commit()
 
-        logger.info("Deleted document metadata: document_id=%s", document_id)
+        logger.info("Document deleted: document_id=%s", document_id)
 
         return {"detail": "Document deleted successfully", "document_id": document_id}
 
