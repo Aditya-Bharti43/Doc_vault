@@ -52,7 +52,17 @@ DOCUMENT CONTENT:
 {document_content}
 </document>
 
+CONFIDENCE INSTRUCTIONS:
+
+- Confidence must be a decimal between 0.0 and 1.0.
+- 0.0 means no confidence.
+- 0.5 means moderate confidence.
+- 1.0 means very high confidence.
+- Never return confidence as a percentage.
+- Example: return 0.95, NOT 95.
+
 Classify this document using the supplied taxonomy.
+
 Return evidence directly supported by the document.
 """
 

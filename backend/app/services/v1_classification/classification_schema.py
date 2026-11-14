@@ -1,7 +1,7 @@
 import logging
 
 from enum import Enum
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator,field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +90,7 @@ class ClassificationResult(BaseModel):
         ge=0.0,
         le=1.0,
     description=(
-        "Confidence score between 0.0 and 1.0, "
-        "never a percentage."
+        "Confidence scores should always be parsed between 0.0 and 1.0 and never a percentage"
     )
     )
 
@@ -106,6 +105,14 @@ class ClassificationResult(BaseModel):
     reasoning: str = Field(
         description="Brief explanation of why this category and subtype were selected."
     )
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value):
+        if isinstance(value, (int, float)) and 1 < value <= 100:
+            return value / 100
+
+        return value
 
     @model_validator(mode="after")
     def validate_subtype(self):
